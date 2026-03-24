@@ -9,6 +9,7 @@ local ReaderRolling = require("apps/reader/modules/readerrolling")
 local InputDialog = require("ui/widget/inputdialog")
 local LLMHandler = require("llm_handler")
 local InfoMessage = require("ui/widget/infomessage")
+local Trapper = require("ui/trapper")
 
 
 local SlopQuiz = WidgetContainer:extend {
@@ -198,82 +199,84 @@ function SlopQuiz:addToMainMenu(menu_items)
 end
 
 function SlopQuiz:startQuiz(start_page, end_page)
-    -- extract text
-    local book_text = ""
-    if not self.ui.document.info.has_pages then
-        -- EPUB / reflowable
-        local start_xp = self.ui.document:getPageXPointer(start_page)
-        local total_pages = self.ui.document:getPageCount()
-        local next_page = end_page + 1
-        local end_xp = nil
-        if next_page <= total_pages then
-            end_xp = self.ui.document:getPageXPointer(next_page)
-        end
-        
-        -- If end_xp is nil (we are at the end of the book), we can just get text to the end.
-        -- We'll try to get the XPointer of the last page as a fallback.
-        if not end_xp then
-            end_xp = self.ui.document:getPageXPointer(total_pages)
-        end
-        
-        if start_xp and end_xp then
-            book_text = self.ui.document:getTextFromXPointers(start_xp, end_xp) or ""
-        end
-    else
-        -- PDF / fixed layout
-        -- TODO testing needed
-        for page = start_page, end_page do
-            local page_text = self.ui.document:getPageText(page) or ""
-            if type(page_text) == "table" then
-                local texts = {}
-                for _, block in ipairs(page_text) do
-                    if type(block) == "table" then
-                        for i = 1, #block do
-                            local span = block[i]
-                            if type(span) == "table" and span.word then
-                                table.insert(texts, span.word)
+    Trapper:wrap(function()
+        -- extract text
+        local book_text = ""
+        if not self.ui.document.info.has_pages then
+            -- EPUB / reflowable
+            local start_xp = self.ui.document:getPageXPointer(start_page)
+            local total_pages = self.ui.document:getPageCount()
+            local next_page = end_page + 1
+            local end_xp = nil
+            if next_page <= total_pages then
+                end_xp = self.ui.document:getPageXPointer(next_page)
+            end
+            
+            -- If end_xp is nil (we are at the end of the book), we can just get text to the end.
+            -- We'll try to get the XPointer of the last page as a fallback.
+            if not end_xp then
+                end_xp = self.ui.document:getPageXPointer(total_pages)
+            end
+            
+            if start_xp and end_xp then
+                book_text = self.ui.document:getTextFromXPointers(start_xp, end_xp) or ""
+            end
+        else
+            -- PDF / fixed layout
+            -- TODO testing needed
+            for page = start_page, end_page do
+                local page_text = self.ui.document:getPageText(page) or ""
+                if type(page_text) == "table" then
+                    local texts = {}
+                    for _, block in ipairs(page_text) do
+                        if type(block) == "table" then
+                            for i = 1, #block do
+                                local span = block[i]
+                                if type(span) == "table" and span.word then
+                                    table.insert(texts, span.word)
+                                end
                             end
                         end
                     end
+                    page_text = table.concat(texts, " ")
                 end
-                page_text = table.concat(texts, " ")
+                book_text = book_text .. "\n" .. page_text
             end
-            book_text = book_text .. "\n" .. page_text
         end
-    end
 
-    local api_key = G_reader_settings:readSetting("slopquiz_api_key") or ""
-    local model = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini"
-    local base_url = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions"
+        local api_key = G_reader_settings:readSetting("slopquiz_api_key") or ""
+        local model = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini"
+        local base_url = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions"
 
-    if api_key == "" then
-        local InfoMessage = require("ui/widget/infomessage")
-        UIManager:show(InfoMessage:new{ text = "Please set SlopQuiz API Key in settings", timeout = 3 })
-        return
-    end
+        if api_key == "" then
+            local InfoMessage = require("ui/widget/infomessage")
+            UIManager:show(InfoMessage:new{ text = "Please set SlopQuiz API Key in settings", timeout = 3 })
+            return
+        end
 
-    -- TODO customizable prompt in settings
-    -- TODO option to add book name and author in prompt?
-    local prompt = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. book_text
+        -- TODO customizable prompt in settings
+        -- TODO option to add book name and author in prompt?
+        local prompt = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. book_text
 
-    local trap = InfoMessage:new{
-        text = "Generating Quiz...\nModel: " .. model,
-    }
-    UIManager:show(trap)
+        local trap = InfoMessage:new{
+            text = "Generating Quiz...\nModel: " .. model,
+        }
+        UIManager:show(trap)
 
-    local response, err = LLMHandler.query(api_key, model, base_url, prompt, trap)
+        local response, err = LLMHandler.query(api_key, model, base_url, prompt, trap)
 
-    UIManager:close(trap)
+        UIManager:close(trap)
 
-    if err then
-        UIManager:show(InfoMessage:new{ text = "Failed to generate quiz: " .. tostring(err) })
-        return
-    end
+        if err then
+            UIManager:show(InfoMessage:new{ text = "Failed to generate quiz: " .. tostring(err) })
+            return
+        end
 
-    UIManager:show(ConfirmBox:new{
-        text = response,
-        ok_text = _("Close"),
-    })
+        UIManager:show(ConfirmBox:new{
+            text = response,
+            ok_text = _("Close"),
+        })
+    end)
 end
 
 function SlopQuiz:onCloseWidget()
