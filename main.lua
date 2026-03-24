@@ -5,50 +5,20 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
 local ConfirmBox = require("ui/widget/confirmbox")
 local logger = require("logger")
--- local ReaderPaging = require("apps/reader/modules/readerpaging")
-local ReaderRolling= require("apps/reader/modules/readerrolling")
+local ReaderRolling = require("apps/reader/modules/readerrolling")
+local InputDialog = require("ui/widget/inputdialog")
+local LLMHandler = require("llm_handler")
+local InfoMessage = require("ui/widget/infomessage")
+
 
 local SlopQuiz = WidgetContainer:extend {
-  name = "hello",
+  name = "slopquiz",
   is_doc_only = false,
 }
 
-function SlopQuiz:onDispatcherRegisterActions()
-  Dispatcher:registerAction("helloworld_action",
-    { category = "none", event = "SlopQuizWorld", title = _("Hello World"), general = true, })
-end
-
 function SlopQuiz:init()
   logger.dbg('SlopQuiz: INIT')
-  -- local function patch(tbl, method_name, label)
-  --   if not tbl or type(tbl[method_name]) ~= "function" then
-  --       logger.dbg("SLOPQUIZ no method", label, method_name)
-  --       return
-  --   end
-  --   local orig_name = "__orig_" .. method_name .. "_" .. label
-  --   if tbl[orig_name] then
-  --       return
-  --   end
-  --   tbl[orig_name] = tbl[method_name]
-  --   tbl[method_name] = function(self, ...)
-  --       logger.dbg("SLOPQUIZ PATCH HIT:", label, method_name, ...)
-  --       return tbl[orig_name](self, ...)
-  --   end
-  --   logger.dbg("SLOPQUIZ patched", label, method_name)
-  -- end
-  --
-  -- local ok1, ReaderPaging = pcall(require, "apps/reader/modules/readerpaging")
-  -- if ok1 then
-  --     patch(ReaderPaging, "onGotoViewRel", "ReaderPaging")
-  --     patch(ReaderPaging, "onGotoPosRel", "ReaderPaging")
-  -- end
-  --
-  -- local ok2, ReaderRolling = pcall(require, "apps/reader/modules/readerrolling")
-  -- if ok2 then
-  --     patch(ReaderRolling, "onGotoViewRel", "ReaderRolling")
-  --     patch(ReaderRolling, "onGotoPosRel", "ReaderRolling")
-  -- end
-  local function isAtChapterEnd ()
+  local function isAtChapterEnd()
     return SlopQuiz.isAtChapterEnd(self)
   end
 
@@ -58,15 +28,23 @@ function SlopQuiz:init()
     ReaderRolling.__chapter_quiz_orig_onGotoViewRel = ReaderRolling.onGotoViewRel
 
     function ReaderRolling:onGotoViewRel(diff, no_page_turn)
-      local isAtChapterEndRes = isAtChapterEnd()
-        logger.dbg("SlopQuiz: patched onGotoViewRel", diff, isAtChapterEndRes)
+        local isAtEnd, start_page, end_page = isAtChapterEnd()
 
-        -- if diff == 1 and self.chapter_quiz_plugin and self:isAtChapterEnd() then
-        if diff == 1 and isAtChapterEndRes then
+        if diff == 1 and isAtEnd then
             UIManager:show(ConfirmBox:new{
-                text = _("End of chapter"),
-                ok_text = _("Continue"),
+                text = _("End of chapter. Would you like to generate a quiz?"),
+                ok_text = _("Quiz Me"),
+                cancel_text = _("Skip"),
                 ok_callback = function()
+                    -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
+                    self.chapter_quiz_plugin:startQuiz(start_page, end_page)
+                    
+                    -- Also optionally go to next page
+                    ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
+                        self, diff, no_page_turn
+                    )
+                end,
+                cancel_callback = function()
                     ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
                         self, diff, no_page_turn
                     )
@@ -80,33 +58,9 @@ function SlopQuiz:init()
         )
     end
   end
-  self:onDispatcherRegisterActions()
-  self.ui.menu:registerToMainMenu(self)
-end
+  ReaderRolling.chapter_quiz_plugin = self
 
--- function SlopQuiz:onPageUpdate()
---   logger.dbg('SLOPQUIZ ONPAGEUPDATE')
---   -- recompute chapter progress here
---   if self:isAtChapterEnd() then
---     self:showQuizDialog()
---   end
---   return false   -- let event propagate
--- end
--- function SlopQuiz:onPosUpdate()
---   logger.dbg('SLOPQUIZ ONPOSUPDATE')
---   -- recompute chapter progress here
---   if self:isAtChapterEnd() then
---     self:showQuizDialog()
---   end
---   return false   -- let event propagate
--- end
---
-function SlopQuiz:onLayoutChange()
-  -- recheck if layout change pushed us to boundary
-  -- if self:isAtChapterEnd() then
-  --   self:showQuizDialog()
-  -- end
-  return false
+  self.ui.menu:registerToMainMenu(self)
 end
 
 function SlopQuiz:showQuizDialog()
@@ -123,12 +77,8 @@ end
 
 function SlopQuiz:isAtChapterEnd()
   logger.dbg('SlopQuiz:isAtChapterEnd')
-  local doc = self.ui.document   -- or self.parent.ui.document if nested
+  local doc = self.ui.document
   if not doc then return false end
-
-  -- # TODO getDocument is nil
-  -- local doc = reader:getDocument()
-  -- if not doc then return false end
 
   logger.dbg('SlopQuiz:isAtChapterEnd')
   -- Get TOC (cached in doc)
@@ -159,27 +109,171 @@ function SlopQuiz:isAtChapterEnd()
       return false
   end
 
-  -- local chapter_start_page = toc[current_chapter_idx].page
+  local chapter_start_page = toc[current_chapter_idx].page
   local next_chapter = toc[current_chapter_idx + 1]
   local chapter_end_page = next_chapter and (next_chapter.page - 1) or total_pages
 
   logger.dbg('SLOPQUIZ current_page: ', current_page, ' total_pages: ', total_pages, ' current_chapter_idx: ', current_chapter_idx, 
     ' chapter_end_page: ', chapter_end_page);
-  return current_page >= chapter_end_page
+  return current_page >= chapter_end_page, chapter_start_page, chapter_end_page
 end
 
 function SlopQuiz:addToMainMenu(menu_items)
-  menu_items.hello_world = {
-    text = _("SlopQuiz World"),
-    -- in which menu this should be appended
-    sorting_hint = "more_tools",
-    -- a callback when tapping
-    callback = function()
-      UIManager:show(InfoMessage:new {
-        text = _("SlopQuiz, plugin world"),
-      })
-    end,
+  -- TODO allow use of config file for settings? (like assistant.koplugin)
+  -- TODO option to inherit settings from assistant.koplugin?
+  -- TODO enable/disable option (for book/globally)
+
+  menu_items.slop_quiz = {
+    text = _("SlopQuiz Settings"),
+    sorting_hint = "tools",
+    sub_item_table = {
+
+        {
+            text = _("API Key"),
+            keep_menu_open = true,
+            callback = function()
+                local inputdialog 
+                inputdialog = InputDialog:new {
+                    title = _("API Key"),
+                    input = G_reader_settings:readSetting("slopquiz_api_key") or "",
+                    buttons = {{
+                        {
+                            text = _("Save"),
+                            callback = function(dialog)
+                                G_reader_settings:saveSetting("slopquiz_api_key", inputdialog:getInputText())
+                                UIManager:close(inputdialog)
+                            end,
+                        }
+                    }}
+                }
+                UIManager:show(inputdialog)
+            end,
+        },
+        {
+            text = _("Model ID"),
+            keep_menu_open = true,
+            callback = function()
+                local inputdialog
+                inputdialog = InputDialog:new {
+                    title = _("Model"),
+                    description= _("Model ID, e.g. gpt-4o-mini, gemini-2.5-flash-lite"),
+                    input = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini",
+                    buttons = {{
+                        {
+                            text = _("Save"),
+                            callback = function()
+                                G_reader_settings:saveSetting("slopquiz_model", inputdialog:getInputText())
+                                UIManager:close(inputdialog)
+                            end,
+                        }
+                    }}
+                }
+              UIManager:show(inputdialog)
+            end,
+        },
+        {
+            text = _("API Base URL"),
+            keep_menu_open = true,
+            callback = function()
+                local inputdialog 
+                inputdialog = InputDialog:new {
+                    title = _("API Base URL"),
+                    description = _("OpenAI compatible API endpoint, e.g. https://api.openai.com/v1/chat/completions"),
+                    input = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions",
+                    buttons = {{
+                        {
+                            text = _("Save"),
+                            callback = function()
+                                G_reader_settings:saveSetting("slopquiz_base_url", inputdialog:getInputText())
+                                UIManager:close(inputdialog)
+                            end,
+                        }
+                    }}
+                }
+                UIManager:show(inputdialog)
+            end,
+        }
+    }
   }
+end
+
+function SlopQuiz:startQuiz(start_page, end_page)
+    -- extract text
+    local book_text = ""
+    if not self.ui.document.info.has_pages then
+        -- EPUB / reflowable
+        local start_xp = self.ui.document:getPageXPointer(start_page)
+        local total_pages = self.ui.document:getPageCount()
+        local next_page = end_page + 1
+        local end_xp = nil
+        if next_page <= total_pages then
+            end_xp = self.ui.document:getPageXPointer(next_page)
+        end
+        
+        -- If end_xp is nil (we are at the end of the book), we can just get text to the end.
+        -- We'll try to get the XPointer of the last page as a fallback.
+        if not end_xp then
+            end_xp = self.ui.document:getPageXPointer(total_pages)
+        end
+        
+        if start_xp and end_xp then
+            book_text = self.ui.document:getTextFromXPointers(start_xp, end_xp) or ""
+        end
+    else
+        -- PDF / fixed layout
+        -- TODO testing needed
+        for page = start_page, end_page do
+            local page_text = self.ui.document:getPageText(page) or ""
+            if type(page_text) == "table" then
+                local texts = {}
+                for _, block in ipairs(page_text) do
+                    if type(block) == "table" then
+                        for i = 1, #block do
+                            local span = block[i]
+                            if type(span) == "table" and span.word then
+                                table.insert(texts, span.word)
+                            end
+                        end
+                    end
+                end
+                page_text = table.concat(texts, " ")
+            end
+            book_text = book_text .. "\n" .. page_text
+        end
+    end
+
+    local api_key = G_reader_settings:readSetting("slopquiz_api_key") or ""
+    local model = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini"
+    local base_url = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions"
+
+    if api_key == "" then
+        local InfoMessage = require("ui/widget/infomessage")
+        UIManager:show(InfoMessage:new{ text = "Please set SlopQuiz API Key in settings", timeout = 3 })
+        return
+    end
+
+    -- TODO customizable prompt in settings
+    -- TODO option to add book name and author in prompt?
+    local prompt = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. book_text
+
+    local trap = InfoMessage:new{
+        text = "Generating Quiz...\nModel: " .. model,
+    }
+    UIManager:show(trap)
+
+    local response, err = LLMHandler.query(api_key, model, base_url, prompt, trap)
+
+    UIManager:close(trap)
+
+    if err then
+        UIManager:show(InfoMessage:new{ text = "Failed to generate quiz: " .. tostring(err) })
+        return
+    end
+
+    UIManager:show(ConfirmBox:new{
+        text = response,
+        ok_text = _("Close"),
+    })
 end
 
 function SlopQuiz:onCloseWidget()
