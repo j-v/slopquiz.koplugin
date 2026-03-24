@@ -18,13 +18,11 @@ local SlopQuiz = WidgetContainer:extend {
 }
 
 function SlopQuiz:init()
-  logger.dbg('SlopQuiz: INIT')
   local function isAtChapterEnd()
     return SlopQuiz.isAtChapterEnd(self)
   end
 
   if not ReaderRolling.__chapter_quiz_patched then
-    logger.dbg('SlopQUIz - patching onGotoViewRel')
     ReaderRolling.__chapter_quiz_patched = true
     ReaderRolling.__chapter_quiz_orig_onGotoViewRel = ReaderRolling.onGotoViewRel
 
@@ -77,23 +75,19 @@ function SlopQuiz:showQuizDialog()
 end
 
 function SlopQuiz:isAtChapterEnd()
-  logger.dbg('SlopQuiz:isAtChapterEnd')
   local doc = self.ui.document
   if not doc then return false end
 
-  logger.dbg('SlopQuiz:isAtChapterEnd')
   -- Get TOC (cached in doc)
   local toc = doc:getToc()
   if not toc or #toc == 0 then return false end
 
-  logger.dbg('SlopQuiz:isAtChapterEnd')
   local current_page = doc:getCurrentPage()
   local total_pages = doc:getPageCount()
   if not current_page or not total_pages then
       return false
   end
 
-  logger.dbg('SlopQuiz:isAtChapterEnd')
   local current_chapter_idx = nil
   for i = 1, #toc do
       local chapter_start = toc[i].page
@@ -114,8 +108,6 @@ function SlopQuiz:isAtChapterEnd()
   local next_chapter = toc[current_chapter_idx + 1]
   local chapter_end_page = next_chapter and (next_chapter.page - 1) or total_pages
 
-  logger.dbg('SLOPQUIZ current_page: ', current_page, ' total_pages: ', total_pages, ' current_chapter_idx: ', current_chapter_idx, 
-    ' chapter_end_page: ', chapter_end_page);
   return current_page >= chapter_end_page, chapter_start_page, chapter_end_page
 end
 
@@ -280,9 +272,7 @@ function SlopQuiz:startQuiz(start_page, end_page)
 end
 
 function SlopQuiz:onCloseWidget()
-  logger.dbg('SlopQuiz onCloseWidget')
   if ReaderRolling.__chapter_quiz_patched and ReaderRolling.__chapter_quiz_orig_onGotoViewRel then
-    logger.dbg('SlopQuiz unpatching')
     ReaderRolling.__chapter_quiz_patched = false
 
     ReaderRolling.onGotoViewRel = ReaderRolling.__chapter_quiz_orig_onGotoViewRel
