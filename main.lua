@@ -4,6 +4,7 @@ local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
 local ConfirmBox = require("ui/widget/confirmbox")
+local TextViewer = require("ui/widget/textviewer")
 local logger = require("logger")
 local ReaderRolling = require("apps/reader/modules/readerrolling")
 local InputDialog = require("ui/widget/inputdialog")
@@ -31,8 +32,6 @@ function SlopQuiz:isEnabled()
 end
 
 function SlopQuiz:init()  
---   logger.dbg('SlopQuiz enabled: ', self:isEnabled())
-
   local function isAtChapterEnd()
     return SlopQuiz.isAtChapterEnd(self)
   end
@@ -54,6 +53,9 @@ function SlopQuiz:init()
                     ok_text = _("Quiz Me"),
                     cancel_text = _("Skip"),
                     ok_callback = function()
+                        -- TODO if quiz has already been generated, cache it so it could be reloaded here
+                        -- TODO we might also want an option to regenerate a quiz
+
                         -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
                         self.chapter_quiz_plugin:startQuiz(start_page, end_page)
                         
@@ -81,18 +83,6 @@ function SlopQuiz:init()
   ReaderRolling.chapter_quiz_plugin = self
 
   self.ui.menu:registerToMainMenu(self)
-end
-
-function SlopQuiz:showQuizDialog()
-  local dlg = ConfirmBox:new {
-    text = _("Start quiz for this chapter?"),
-    ok_text = _("Start"),
-    cancel_text = _("Later"),
-    ok_callback = function()
-      -- your quiz UI here (another dialog or custom widget)
-    end,
-  }
-  UIManager:show(dlg)
 end
 
 function SlopQuiz:isAtChapterEnd()
@@ -278,12 +268,13 @@ function SlopQuiz:startQuiz(start_page, end_page)
             end
         end
 
+        -- TODO handle cases where book_text might be too long
+
         local api_key = G_reader_settings:readSetting("slopquiz_api_key") or ""
         local model = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini"
         local base_url = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions"
 
         if api_key == "" then
-            local InfoMessage = require("ui/widget/infomessage")
             UIManager:show(InfoMessage:new{ text = "Please set SlopQuiz API Key in settings", timeout = 3 })
             return
         end
@@ -306,10 +297,14 @@ function SlopQuiz:startQuiz(start_page, end_page)
             return
         end
 
-        UIManager:show(ConfirmBox:new{
-            text = response,
-            ok_text = _("Close"),
-        })
+        -- TODO convert markdown text to HTML and use ScrollHtmlWidget like assistant_viewer.lua
+        local textviewer = TextViewer:new{
+            title = _("Chapter quiz"),
+            text = response
+        }
+        UIManager:show(textviewer)
+        
+        -- TODO give an option to write answers to the prompts and save them somewhere
     end)
 end
 
