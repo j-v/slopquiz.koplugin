@@ -9,8 +9,21 @@ local logger = require("logger")
 local ReaderRolling = require("apps/reader/modules/readerrolling")
 local InputDialog = require("ui/widget/inputdialog")
 local LLMHandler = require("llm_handler")
-local InfoMessage = require("ui/widget/infomessage")
 local Trapper = require("ui/trapper")
+local RadioButtonTable = require("ui/widget/radiobuttontable")
+local ButtonTable = require("ui/widget/buttontable")
+local TitleBar = require("ui/widget/titlebar")
+local FrameContainer = require("ui/widget/container/framecontainer")
+local MovableContainer = require("ui/widget/container/movablecontainer")
+local CenterContainer = require("ui/widget/container/centercontainer")
+local VerticalGroup = require("ui/widget/verticalgroup")
+local VerticalSpan = require("ui/widget/verticalspan")
+local FocusManager = require("ui/widget/focusmanager")
+local Device = require("device")
+local Screen = Device.screen
+local Size = require("ui/size")
+local Geom = require("ui/geometry")
+local Blitbuffer = require("ffi/blitbuffer")
 
 
 -- configuration locations
@@ -44,10 +57,10 @@ local function animateLoadingDots(trap, model, intervalSeconds)
     local timer
     local function update()
         dots = dots .. "."
-        if #dots > 3 then dots = "." end
+        if #dots > 3 then dots = "" end
         local new_text = _("Generating Quiz") .. dots .. "\n" .. _("Model: ") .. model
         trap.text = new_text
-        -- HorizontalGroup:new{image_widget, span, text_widget}
+        -- Dig into trap.movable to get HorizontalGroup:new{image_widget, span, text_widget}
         local text_widget = trap.movable[1][1][3]
         if text_widget then
             text_widget.text = new_text
@@ -66,6 +79,131 @@ local function animateLoadingDots(trap, model, intervalSeconds)
             timer = nil
         end
     end
+end
+
+
+local ProviderSelectionDialog = FocusManager:extend{
+    width = nil,
+    providers = nil,
+}
+
+function ProviderSelectionDialog:init()
+    self.width = self.width or math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.8)
+    local title_bar = TitleBar:new{
+        width = self.width,
+        with_bottom_line = true,
+        title = _("Select Provider"),
+        show_parent = self,
+        info_text = _("Add addtional providers to config.lua to select them here")
+    }
+
+    local current_provider = G_reader_settings:readSetting("slopquiz_provider");
+    local radio_buttons = {}
+    table.insert(radio_buttons, {
+        {
+            text = _("Default - configure in menu"),
+            checked = current_provider == nil or current_provider == "_default",
+            provider = "_default",
+        }
+    })
+    local invalid_provider_found = false
+    if self.providers ~= nil then
+        for i = 1, #self.providers do
+            -- validate provider config
+            local provider_is_valid = true
+            if self.providers[i].name == nil or self.providers[i].name == "" then
+                provider_is_valid = false
+            end
+            if self.providers[i].model == nil or self.providers[i].model == "" then
+                provider_is_valid = false
+            end
+            if self.providers[i].api_key == nil then
+                provider_is_valid = false
+            end 
+
+            if provider_is_valid then
+                table.insert(radio_buttons, {
+                    {
+                        text = self.providers[i].name,
+                        checked = current_provider == self.providers[i].name,
+                        provider = self.providers[i],
+                    }
+                })
+            else
+                invalid_provider_found = true
+            end
+        end
+        if invalid_provider_found then 
+            UIManager:show(InfoMessage:new{
+                text = _("Invalid provider found in config.lua. Ensure name, model, and api_key are provided for each provider")
+            })
+        end
+    end
+
+    self.radio_table = RadioButtonTable:new{
+        radio_buttons = radio_buttons,
+        width = self.width - 2 * Size.padding.large,
+        parent = self,
+    }
+
+    self.button_table = ButtonTable:new{
+        width = self.width - 2 * Size.padding.default,
+        buttons = {
+            {
+                {
+                    text = _("Cancel"),
+                    callback = function()
+                        UIManager:close(self)
+                    end,
+                },
+                {
+                    text = _("Select"),
+                    callback = function()
+                        G_reader_settings:saveSetting("slopquiz_provider", self.radio_table.checked_button.provider.name)
+                        UIManager:close(self)
+                    end,
+                }
+            }
+        },
+        show_parent = self,
+    }
+
+    self.dialog_frame = FrameContainer:new{
+        radius = Size.radius.window,
+        bordersize = Size.border.window,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{
+            align = "center",
+            title_bar,
+            VerticalSpan:new{ width = Size.span.vertical_large },
+            self.radio_table,
+            VerticalSpan:new{ width = Size.span.vertical_large },
+            self.button_table,
+        }
+    }
+
+    self.movable = MovableContainer:new{
+        self.dialog_frame,
+    }
+    self[1] = CenterContainer:new{
+        dimen = Geom:new{
+            w = Screen:getWidth(),
+            h = Screen:getHeight(),
+        },
+        self.movable,
+    }
+end
+
+function ProviderSelectionDialog:onShow()
+    UIManager:setDirty(self, function()
+        return "ui", self.dialog_frame.dimen
+    end)
+end
+
+function ProviderSelectionDialog:onCloseWidget()
+    UIManager:setDirty(nil, function()
+        return "ui", self.movable.dimen
+    end)
 end
 
 
@@ -100,6 +238,7 @@ function SlopQuiz:init()
     ReaderRolling.__chapter_quiz_patched = true
     ReaderRolling.__chapter_quiz_orig_onGotoViewRel = ReaderRolling.onGotoViewRel
 
+---@diagnostic disable-next-line: duplicate-set-field
     function ReaderRolling:onGotoViewRel(diff, no_page_turn)
         if isEnabled() and diff == 1 then
             local isAtEnd, start_page, end_page = isAtChapterEnd()
@@ -213,69 +352,107 @@ function SlopQuiz:addToMainMenu(menu_items)
             separator = true,
         },
         {
-            text = _("API Key"),
-            keep_menu_open = true,
+            text = _("Select LLM provider"),
+            enabled_func = function()
+                return CONFIG and CONFIG.providers and #CONFIG.providers > 0
+            end,
             callback = function()
-                local inputdialog 
-                inputdialog = InputDialog:new {
-                    title = _("API Key"),
-                    input = G_reader_settings:readSetting("slopquiz_api_key") or "",
-                    buttons = {{
-                        {
-                            text = _("Save"),
-                            callback = function(dialog)
-                                G_reader_settings:saveSetting("slopquiz_api_key", inputdialog:getInputText())
-                                UIManager:close(inputdialog)
-                            end,
-                        }
-                    }}
+                local providers = CONFIG and CONFIG.providers
+                -- if not providers or #providers == 0 then return end
+                local dialog
+                dialog = ProviderSelectionDialog:new{
+                    providers = providers
                 }
-                UIManager:show(inputdialog)
+                UIManager:show(dialog)
             end,
         },
         {
-            text = _("Model ID"),
-            keep_menu_open = true,
-            callback = function()
-                local inputdialog
-                inputdialog = InputDialog:new {
-                    title = _("Model"),
-                    description= _("Model ID, e.g. gpt-4o-mini, gemini-2.5-flash-lite"),
-                    input = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini",
-                    buttons = {{
-                        {
-                            text = _("Save"),
-                            callback = function()
-                                G_reader_settings:saveSetting("slopquiz_model", inputdialog:getInputText())
-                                UIManager:close(inputdialog)
-                            end,
+            text = _("Default LLM provider configuration"),
+            sub_item_table = {
+                {
+                    text = _("API Key"),
+                    keep_menu_open = true,
+                    callback = function()
+                        local inputdialog 
+                        inputdialog = InputDialog:new {
+                            title = _("API Key"),
+                            input = G_reader_settings:readSetting("slopquiz_api_key") or "",
+                            buttons = {{
+                                {
+                                    text = _("Cancel"),
+                                    callback = function()
+                                        UIManager:close(inputdialog)
+                                    end,
+                                },
+                                {
+                                    text = _("Save"),
+                                    callback = function(dialog)
+                                        G_reader_settings:saveSetting("slopquiz_api_key", inputdialog:getInputText())
+                                        UIManager:close(inputdialog)
+                                    end,
+                                }
+                            }}
                         }
-                    }}
-                }
-              UIManager:show(inputdialog)
-            end,
-        },
-        {
-            text = _("API Base URL"),
-            keep_menu_open = true,
-            callback = function()
-                local inputdialog 
-                inputdialog = InputDialog:new {
-                    title = _("API Base URL"),
-                    description = _("OpenAI compatible API endpoint, e.g. https://api.openai.com/v1/chat/completions"),
-                    input = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions",
-                    buttons = {{
-                        {
-                            text = _("Save"),
-                            callback = function()
-                                G_reader_settings:saveSetting("slopquiz_base_url", inputdialog:getInputText())
-                                UIManager:close(inputdialog)
-                            end,
+                        UIManager:show(inputdialog)
+                    end,
+                },
+                {
+                    text = _("Model ID"),
+                    keep_menu_open = true,
+                    callback = function()
+                        local inputdialog
+                        inputdialog = InputDialog:new {
+                            title = _("Model"),
+                            description= _("Model ID, e.g. gpt-4o-mini, gemini-2.5-flash-lite"),
+                            input = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini",
+                            buttons = {{
+                                {
+                                    text = _("Cancel"),
+                                    callback = function()
+                                        UIManager:close(inputdialog)
+                                    end,
+                                },
+                                {
+                                    text = _("Save"),
+                                    callback = function()
+                                        G_reader_settings:saveSetting("slopquiz_model", inputdialog:getInputText())
+                                        UIManager:close(inputdialog)
+                                    end,
+                                }
+                            }}
                         }
-                    }}
+                    UIManager:show(inputdialog)
+                    end,
+                },
+                {
+                    text = _("API Base URL"),
+                    keep_menu_open = true,
+                    callback = function()
+                        local inputdialog 
+                        inputdialog = InputDialog:new {
+                            title = _("API Base URL"),
+                            description = _("OpenAI compatible API endpoint, e.g. https://api.openai.com/v1/chat/completions"),
+                            input = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions",
+                            buttons = {{
+                                {
+                                    text = _("Cancel"),
+                                    callback = function()
+                                        UIManager:close(inputdialog)
+                                    end,
+                                },
+                                {
+                                    text = _("Save"),
+                                    callback = function()
+                                        G_reader_settings:saveSetting("slopquiz_base_url", inputdialog:getInputText())
+                                        UIManager:close(inputdialog)
+                                    end,
+                                }
+                            }}
+                        }
+                        UIManager:show(inputdialog)
+                    end,
                 }
-                UIManager:show(inputdialog)
-            end,
+            }
         }
     }
   }
@@ -329,9 +506,37 @@ function SlopQuiz:startQuiz(start_page, end_page)
 
         -- TODO handle cases where book_text might be too long
 
-        local api_key = G_reader_settings:readSetting("slopquiz_api_key") or ""
-        local model = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini"
-        local base_url = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions"
+        local provider_name = G_reader_settings:readSetting("slopquiz_provider")
+        local api_key, model, base_url
+        local provider_config_found = false
+        if provider_name ~= nil and provider_name ~= "_default" then
+            if CONFIG and CONFIG.providers then
+                local providers = CONFIG.providers
+                for i = 1, #providers do
+                    local provider = providers[i]
+                    if provider.name == provider_name then
+                        provider_config_found = true
+                        api_key = provider.api_key
+                        model = provider.model
+                        base_url = provider.base_url
+                        break
+                    end
+                end  
+            end
+
+            if provider_config_found == false then
+                UIManager:show(InfoMessage:new{
+                    text = _("Selected provider not found in config.lua. Falling back to default provider.")
+                })
+                G_reader_settings:saveSetting("slopquiz_provider", "_default")
+            end
+        end
+
+        if provider_config_found == false then
+            api_key = G_reader_settings:readSetting("slopquiz_api_key") or ""
+            model = G_reader_settings:readSetting("slopquiz_model") or "gpt-4o-mini"
+            base_url = G_reader_settings:readSetting("slopquiz_base_url") or "https://api.openai.com/v1/chat/completions"
+        end
 
         if api_key == "" then
             UIManager:show(InfoMessage:new{ text = "Please set SlopQuiz API Key in settings", timeout = 3 })
