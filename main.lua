@@ -13,6 +13,32 @@ local InfoMessage = require("ui/widget/infomessage")
 local Trapper = require("ui/trapper")
 
 
+-- configuration locations
+local PLUGIN_DIR = string.match(debug.getinfo(1).source, "^@(.*/)")
+local CONFIG_FILE_PATH = PLUGIN_DIR .. "config.lua"
+local CONFIG_LOAD_ERROR = nil
+local CONFIG = nil
+
+local function testConfigFile(filePath)
+    local env = {}
+    setmetatable(env, {__index = _G})
+    local chunk, err = loadfile(filePath, "t", env) -- test mode to loadfile, check syntax errors
+    if not chunk then return false, err end
+    local success, result = pcall(chunk) -- run the code, checks runtime errors
+    if not success then return false, result end
+    return true, nil
+end
+
+-- Test and load config file
+local ok, err = testConfigFile(CONFIG_FILE_PATH)
+if not ok then 
+    CONFIG_LOAD_ERROR = err 
+else
+    local success, result = pcall(function() return dofile(CONFIG_FILE_PATH) end)
+    if success then CONFIG = result
+    else logger.warn(result) end
+end
+
 local function animateLoadingDots(trap, model, intervalSeconds)
     local dots = ""
     local timer

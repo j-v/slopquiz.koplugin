@@ -43,10 +43,4 @@ luac.out
 *.x86_64
 *.hex
 
-# SSL certs
-key.pem
-cert.pem
-
-# Build output
-build/**
-bin/**
+config.lua
