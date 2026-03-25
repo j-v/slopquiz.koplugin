@@ -13,6 +13,36 @@ local InfoMessage = require("ui/widget/infomessage")
 local Trapper = require("ui/trapper")
 
 
+local function animateLoadingDots(trap, model, intervalSeconds)
+    local dots = ""
+    local timer
+    local function update()
+        dots = dots .. "."
+        if #dots > 3 then dots = "." end
+        local new_text = _("Generating Quiz") .. dots .. "\n" .. _("Model: ") .. model
+        trap.text = new_text
+        -- HorizontalGroup:new{image_widget, span, text_widget}
+        local text_widget = trap.movable[1][1][3]
+        if text_widget then
+            text_widget.text = new_text
+            text_widget:free()
+            text_widget:init()
+            UIManager:setDirty(trap, function()
+                return "ui", trap.movable.dimen
+            end)
+        end
+        timer = UIManager:scheduleIn(intervalSeconds, update)
+    end
+    timer = UIManager:scheduleIn(intervalSeconds, update)
+    return function()
+        if timer then
+            UIManager:unschedule(timer)
+            timer = nil
+        end
+    end
+end
+
+
 local SlopQuiz = WidgetContainer:extend {
   name = "slopquiz",
   is_doc_only = false,
@@ -287,12 +317,15 @@ function SlopQuiz:startQuiz(start_page, end_page)
         local prompt = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. book_text
 
         local trap = InfoMessage:new{
-            text = "Generating Quiz...\nModel: " .. model,
+            text = _("Generating Quiz...") .. "\n" .. _("Model: ") .. model,
         }
         UIManager:show(trap)
 
+        local stopAnimation = animateLoadingDots(trap, model, 0.5)
+
         local response, err = LLMHandler.query(api_key, model, base_url, prompt, trap)
 
+        stopAnimation()
         UIManager:close(trap)
 
         if err then
