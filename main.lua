@@ -4,7 +4,7 @@ local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
 local ConfirmBox = require("ui/widget/confirmbox")
-local TextViewer = require("ui/widget/textviewer")
+local QuizViewer = require("quizviewer")
 local logger = require("logger")
 local ReaderRolling = require("apps/reader/modules/readerrolling")
 local InputDialog = require("ui/widget/inputdialog")
@@ -300,12 +300,11 @@ function SlopQuiz:startQuiz(start_page, end_page)
             return
         end
 
-        -- TODO convert markdown text to HTML and use ScrollHtmlWidget like assistant_viewer.lua
-        local textviewer = TextViewer:new{
+        local viewer = QuizViewer:new{
             title = _("Chapter quiz"),
             text = response
         }
-        UIManager:show(textviewer)
+        UIManager:show(viewer)
         
         -- TODO give an option to write answers to the prompts and save them somewhere
     end)
