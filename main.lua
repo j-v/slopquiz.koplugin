@@ -19,13 +19,13 @@ local SlopQuiz = WidgetContainer:extend {
 }
 
 function SlopQuiz:isEnabled()
+  if self.ui.doc_settings == nil then return false end
+
   local bookSetting = self.ui.doc_settings:readSetting("slopquiz_enabled")
   if bookSetting ~= nil then
-    logger.dbg('SlopQuiz bookSetting ', bookSetting)
     return bookSetting
   else 
     local defaultSetting = G_reader_settings:isTrue("slopquiz_enabled_by_default")
-    logger.dbg('SlopQuiz defaultSetting ', defaultSetting)
     self.ui.doc_settings:saveSetting("slopquiz_enabled", defaultSetting)
     return defaultSetting
   end
@@ -134,6 +134,9 @@ function SlopQuiz:addToMainMenu(menu_items)
         {
             text = _("Enable for this book"),
             keep_menu_open = true,
+            enabled_func = function ()
+                return self.ui.doc_settings ~= nil
+            end,
             checked_func = function()
                 return self:isEnabled()
             end,
