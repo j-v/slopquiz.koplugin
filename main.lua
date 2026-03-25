@@ -17,9 +17,28 @@ local SlopQuiz = WidgetContainer:extend {
   is_doc_only = false,
 }
 
-function SlopQuiz:init()
+function SlopQuiz:isEnabled()
+  local bookSetting = self.ui.doc_settings:readSetting("slopquiz_enabled")
+  if bookSetting ~= nil then
+    logger.dbg('SlopQuiz bookSetting ', bookSetting)
+    return bookSetting
+  else 
+    local defaultSetting = G_reader_settings:isTrue("slopquiz_enabled_by_default")
+    logger.dbg('SlopQuiz defaultSetting ', defaultSetting)
+    self.ui.doc_settings:saveSetting("slopquiz_enabled", defaultSetting)
+    return defaultSetting
+  end
+end
+
+function SlopQuiz:init()  
+--   logger.dbg('SlopQuiz enabled: ', self:isEnabled())
+
   local function isAtChapterEnd()
     return SlopQuiz.isAtChapterEnd(self)
+  end
+
+  local function isEnabled()
+    return SlopQuiz.isEnabled(self)
   end
 
   if not ReaderRolling.__chapter_quiz_patched then
@@ -27,30 +46,32 @@ function SlopQuiz:init()
     ReaderRolling.__chapter_quiz_orig_onGotoViewRel = ReaderRolling.onGotoViewRel
 
     function ReaderRolling:onGotoViewRel(diff, no_page_turn)
-        local isAtEnd, start_page, end_page = isAtChapterEnd()
-
-        if diff == 1 and isAtEnd then
-            UIManager:show(ConfirmBox:new{
-                text = _("End of chapter. Would you like to generate a quiz?"),
-                ok_text = _("Quiz Me"),
-                cancel_text = _("Skip"),
-                ok_callback = function()
-                    -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
-                    self.chapter_quiz_plugin:startQuiz(start_page, end_page)
-                    
-                    -- Also optionally go to next page
-                    ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
-                        self, diff, no_page_turn
-                    )
-                end,
-                cancel_callback = function()
-                    ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
-                        self, diff, no_page_turn
-                    )
-                end,
-            })
-            return true
+        if isEnabled() and diff == 1 then
+            local isAtEnd, start_page, end_page = isAtChapterEnd()
+            if isAtEnd then
+                UIManager:show(ConfirmBox:new{
+                    text = _("End of chapter. Would you like to generate a quiz?"),
+                    ok_text = _("Quiz Me"),
+                    cancel_text = _("Skip"),
+                    ok_callback = function()
+                        -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
+                        self.chapter_quiz_plugin:startQuiz(start_page, end_page)
+                        
+                        -- Also optionally go to next page
+                        ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
+                            self, diff, no_page_turn
+                        )
+                    end,
+                    cancel_callback = function()
+                        ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
+                            self, diff, no_page_turn
+                        )
+                    end,
+                })
+                return true
+            end
         end
+
 
         return ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
             self, diff, no_page_turn
@@ -114,13 +135,34 @@ end
 function SlopQuiz:addToMainMenu(menu_items)
   -- TODO allow use of config file for settings? (like assistant.koplugin)
   -- TODO option to inherit settings from assistant.koplugin?
-  -- TODO enable/disable option (for book/globally)
 
   menu_items.slop_quiz = {
     text = _("SlopQuiz Settings"),
     sorting_hint = "tools",
     sub_item_table = {
 
+        {
+            text = _("Enable for this book"),
+            keep_menu_open = true,
+            checked_func = function()
+                return self:isEnabled()
+            end,
+            callback = function()
+                local currently_enabled = self:isEnabled()
+                self.ui.doc_settings:saveSetting("slopquiz_enabled", not currently_enabled)
+            end,
+        },
+        {
+            text = _("Enable by default for new books"),
+            keep_menu_open = true,
+            checked_func = function()
+                return G_reader_settings:isTrue("slopquiz_enabled_by_default")
+            end,
+            callback = function()
+                G_reader_settings:flipNilOrFalse("slopquiz_enabled_by_default")
+            end,
+            separator = true,
+        },
         {
             text = _("API Key"),
             keep_menu_open = true,
