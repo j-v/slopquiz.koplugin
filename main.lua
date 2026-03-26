@@ -33,6 +33,29 @@ local AUTHORS_VAR = "$AUTHORS"
 local BOOK_TITLE_VAR ="$BOOK_TITLE"
 local DEFAULT_QUIZ_PROMPT = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR
 
+local BUILTIN_PROMPTS = {
+    {
+        id = "_default",
+        name = _("Default (comprehension quiz)"),
+        prompt = DEFAULT_QUIZ_PROMPT,
+    },
+    {
+        id = "_multipleChoice",
+        name = _("Multiple choice quiz"),
+        prompt = "You are a testing the reader of the book \"" .. BOOK_TITLE_VAR .. "\" by " .. AUTHORS_VAR .. "\" on comprehension of the current chapter. Provide a multiple choice test of 3 to 10 questions based on the content. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR,
+    },
+    {
+        id = "_vocabulary",
+        name = _("Vocabulary & language focus"),
+        prompt = "You are a vocabulary tutor. From the following chapter of \"" .. BOOK_TITLE_VAR .. "\" by " .. AUTHORS_VAR .. ", identify 5 notable words or phrases. For each, give a short example sentence showing its use in context and prompt the reader to provide a definition. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR,
+    },
+    {
+        id = "_themes",
+        name = _("Themes & critical analysis"),
+        prompt = "You are a literary critic. Analyse the following chapter from \"" .. BOOK_TITLE_VAR .. "\" by " .. AUTHORS_VAR .. ". Identify 2-3 key themes or motifs at work in this chapter, explain how they are developed, and pose one discussion question inviting the reader's interpretation. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR,
+    },
+}
+
 -- configuration locations
 local PLUGIN_DIR = string.match(debug.getinfo(1).source, "^@(.*/)")
 local CONFIG_FILE_PATH = PLUGIN_DIR .. "config.lua"
@@ -94,6 +117,107 @@ local ProviderSelectionDialog = FocusManager:extend{
     width = nil,
     providers = nil,
 }
+
+-- PromptSelectionDialog -------------------------------------------------------
+local PromptSelectionDialog = FocusManager:extend{
+    width = nil,
+    user_prompts = nil, -- from config.lua
+}
+
+function PromptSelectionDialog:init()
+    self.width = self.width or math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.8)
+    local title_bar = TitleBar:new{
+        width = self.width,
+        with_bottom_line = true,
+        title = _("Select Quiz Prompt"),
+        show_parent = self,
+        info_text = _("Add custom prompts via user_prompts in config.lua"),
+    }
+
+    local current_prompt_id = G_reader_settings:readSetting("slopquiz_prompt_id") or "_default"
+    local radio_buttons = {}
+
+    -- built-in prompts
+    for _, p in ipairs(BUILTIN_PROMPTS) do
+        table.insert(radio_buttons, {{
+            text = p.name,
+            checked = current_prompt_id == p.id,
+            provider = { id = p.id },
+        }})
+    end
+
+    -- user-defined prompts from config.lua
+    if self.user_prompts then
+        for i, up in ipairs(self.user_prompts) do
+            if type(up.name) == "string" and type(up.prompt) == "string" then
+                local uid = "_user_" .. i
+                table.insert(radio_buttons, {{
+                    text = up.name,
+                    checked = current_prompt_id == uid,
+                    provider = { id = uid },
+                }})
+            end
+        end
+    end
+
+    self.radio_table = RadioButtonTable:new{
+        radio_buttons = radio_buttons,
+        width = self.width - 2 * Size.padding.large,
+        parent = self,
+    }
+
+    self.button_table = ButtonTable:new{
+        width = self.width - 2 * Size.padding.default,
+        buttons = {{
+            {
+                text = _("Cancel"),
+                callback = function() UIManager:close(self) end,
+            },
+            {
+                text = _("Select"),
+                callback = function()
+                    local pid = self.radio_table.checked_button.provider.id
+                    G_reader_settings:saveSetting("slopquiz_prompt_id", pid)
+                    UIManager:close(self)
+                end,
+            },
+        }},
+        show_parent = self,
+    }
+
+    self.dialog_frame = FrameContainer:new{
+        radius = Size.radius.window,
+        bordersize = Size.border.window,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{
+            align = "center",
+            title_bar,
+            VerticalSpan:new{ width = Size.span.vertical_large },
+            self.radio_table,
+            VerticalSpan:new{ width = Size.span.vertical_large },
+            self.button_table,
+        }
+    }
+
+    self.movable = MovableContainer:new{ self.dialog_frame }
+    self[1] = CenterContainer:new{
+        dimen = Geom:new{ w = Screen:getWidth(), h = Screen:getHeight() },
+        self.movable,
+    }
+end
+
+function PromptSelectionDialog:onShow()
+    UIManager:setDirty(self, function()
+        return "ui", self.dialog_frame.dimen
+    end)
+end
+
+function PromptSelectionDialog:onCloseWidget()
+    UIManager:setDirty(nil, function()
+        return "ui", self.movable.dimen
+    end)
+end
+-- end PromptSelectionDialog ---------------------------------------------------
 
 function ProviderSelectionDialog:init()
     self.width = self.width or math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.8)
@@ -491,7 +615,17 @@ function SlopQuiz:addToMainMenu(menu_items)
                     end,
                 }
             }
-        }
+        },
+        {
+            text = _("Select quiz prompt"),
+            callback = function()
+                local user_prompts = CONFIG and CONFIG.user_prompts
+                local dialog = PromptSelectionDialog:new{
+                    user_prompts = user_prompts,
+                }
+                UIManager:show(dialog)
+            end,
+        },
     }
   }
 end
@@ -614,14 +748,35 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
         end
 
         local docInfo = self:getDocumentInfo()
+
+        -- Resolve selected prompt template
+        local prompt_id = G_reader_settings:readSetting("slopquiz_prompt_id") or "_default"
         local base_prompt = DEFAULT_QUIZ_PROMPT
+        -- check built-in prompts
+        for _, p in ipairs(BUILTIN_PROMPTS) do
+            if p.id == prompt_id then
+                base_prompt = p.prompt
+                break
+            end
+        end
+        -- check user prompts (ids are "_user_<index>")
+        if prompt_id:sub(1, 6) == "_user_" then
+            local idx = tonumber(prompt_id:sub(7))
+            if idx and CONFIG and CONFIG.user_prompts and CONFIG.user_prompts[idx] then
+                local user_prompt = CONFIG.user_prompts[idx]
+                if type(user_prompt.prompt) == "string" then
+                    base_prompt = user_prompt.prompt
+                end
+            end
+        end
+
         local prompt = base_prompt:gsub(
             BOOK_TITLE_VAR, docInfo.title
         ):gsub(
             AUTHORS_VAR, docInfo.authors
         ):gsub(
             CHAPTER_TEXT_VAR, chapter_text
-        )     
+        )
 
         local trap = InfoMessage:new{
             text = _("Generating Quiz...") .. "\n" .. _("Model: ") .. model,
