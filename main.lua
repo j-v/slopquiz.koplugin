@@ -360,7 +360,6 @@ function SlopQuiz:addToMainMenu(menu_items)
             end,
             callback = function()
                 local providers = CONFIG and CONFIG.providers
-                -- if not providers or #providers == 0 then return end
                 local dialog
                 dialog = ProviderSelectionDialog:new{
                     providers = providers
@@ -477,12 +476,14 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
     local quiz_viewer_title = _("Chapter quiz")
     -- Check if a quiz bookmark already exists on this page
     if self.ui.annotation and self.ui.annotation.annotations then
-        for _, anno in ipairs(self.ui.annotation.annotations) do
+        for i, anno in ipairs(self.ui.annotation.annotations) do
             if anno.page == page_to_bookmark and anno.text and anno.text:find("^SlopQuiz") then
                 if anno.note then
                     local viewer = QuizViewer:new{
                         title = quiz_viewer_title,
-                        text = anno.note
+                        text = anno.note,
+                        index = i,
+                        ui = self.ui,
                     }
                     UIManager:show(viewer)
                     return
@@ -596,11 +597,6 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
             return
         end
 
-        local viewer = QuizViewer:new{
-            title = quiz_viewer_title,
-            text = response
-        }
-        UIManager:show(viewer)
         
         local chapter = self.ui.toc:getTocTitleByPage(page_to_bookmark)
         if chapter == "" then
@@ -615,6 +611,14 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
         }
         local index = self.ui.annotation:addItem(item)
         self.ui:handleEvent(Event:new("AnnotationsModified", { item, index_modified = index }))
+
+        local viewer = QuizViewer:new{
+            title = quiz_viewer_title,
+            text = response,
+            index = index,
+            ui = self.ui,
+        }
+        UIManager:show(viewer)
     end)
 end
 

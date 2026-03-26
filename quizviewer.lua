@@ -82,6 +82,9 @@ local QuizViewer = InputContainer:extend{
     text_padding = Size.padding.large,
     text_margin = Size.margin.small,
     button_padding = Size.padding.default,
+    item = nil,
+    ui = nil,
+    index = nil,
 }
 
 function QuizViewer:init()
@@ -208,6 +211,13 @@ function QuizViewer:init()
             allow_hold_when_disabled = true,
         },
         {
+            text = _("Edit"),
+            enabled = function() return self.ui and self.ui.bookmark and (self.item or self.index) end,
+            callback = function()
+                self:onEdit()
+            end,
+        },
+        {
             text = _("Close"),
             callback = function()
                 self:onClose()
@@ -320,6 +330,30 @@ function QuizViewer:onClose()
         self.close_callback()
     end
     return true
+end
+
+function QuizViewer:onEdit()
+    if not self.ui or not self.ui.bookmark then return end
+    local item_or_index = self.index or self.item
+    self.ui.bookmark:setBookmarkNote(item_or_index, false, nil, function()
+        if self.item then
+            self.text = self.item.note
+        elseif self.index then
+            local annotation = self.ui.annotation.annotations[self.index]
+            self.text = annotation and annotation.note or self.text
+        end
+        self:updateText()
+    end)
+end
+
+function QuizViewer:updateText()
+    local html_body, err = MD(self.text or "")
+    if err then
+        html_body = self.text or ""
+    end
+    self.html_viewer.html_body = html_body
+    self.html_viewer:init()
+    UIManager:setDirty(self, "partial")
 end
 
 function QuizViewer:onSwipe(arg, ges)
