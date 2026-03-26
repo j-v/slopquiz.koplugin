@@ -14,6 +14,7 @@ local RadioButtonTable = require("ui/widget/radiobuttontable")
 local ButtonTable = require("ui/widget/buttontable")
 local TitleBar = require("ui/widget/titlebar")
 local FrameContainer = require("ui/widget/container/framecontainer")
+local Event = require("ui/event")
 local MovableContainer = require("ui/widget/container/movablecontainer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local VerticalGroup = require("ui/widget/verticalgroup")
@@ -252,7 +253,8 @@ function SlopQuiz:init()
                         -- TODO we might also want an option to regenerate a quiz
 
                         -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
-                        self.chapter_quiz_plugin:startQuiz(start_page, end_page)
+                        local isAtEnd, start_page, end_page, next_chapter_xp = isAtChapterEnd()
+                        self.chapter_quiz_plugin:startQuiz(start_page, end_page, next_chapter_xp)
                         
                         -- Also optionally go to next page
                         ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
@@ -314,7 +316,7 @@ function SlopQuiz:isAtChapterEnd()
   local next_chapter = toc[current_chapter_idx + 1]
   local chapter_end_page = next_chapter and (next_chapter.page - 1) or total_pages
 
-  return current_page >= chapter_end_page, chapter_start_page, chapter_end_page
+  return current_page >= chapter_end_page, chapter_start_page, chapter_end_page, next_chapter and next_chapter.xpointer
 end
 
 function SlopQuiz:addToMainMenu(menu_items)
@@ -458,7 +460,7 @@ function SlopQuiz:addToMainMenu(menu_items)
   }
 end
 
-function SlopQuiz:startQuiz(start_page, end_page)
+function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
     Trapper:wrap(function()
         -- extract text
         local book_text = ""
@@ -570,7 +572,32 @@ function SlopQuiz:startQuiz(start_page, end_page)
         }
         UIManager:show(viewer)
         
-        -- TODO give an option to write answers to the prompts and save them somewhere
+        local page_to_bookmark
+        if not self.ui.document.info.has_pages then
+            -- EPUB / reflowable
+            if next_chapter_xp then
+                page_to_bookmark = self.ui.document.getPrevVisibleChar and self.ui.document:getPrevVisibleChar(next_chapter_xp) or next_chapter_xp
+            else
+                page_to_bookmark = self.ui.document:getPageXPointer(end_page)
+            end
+        else
+            -- PDF / fixed layout
+            page_to_bookmark = end_page
+        end
+
+        local chapter = self.ui.toc:getTocTitleByPage(page_to_bookmark)
+        if chapter == "" then
+            chapter = nil
+        end
+        local text = chapter and 'SlopQuiz: ' .. chapter or 'SlopQuiz'
+        local item = {
+            page = page_to_bookmark,
+            text = text,
+            chapter = chapter,
+            note = response,
+        }
+        local index = self.ui.annotation:addItem(item)
+        self.ui:handleEvent(Event:new("AnnotationsModified", { item, index_modified = index }))
     end)
 end
 
