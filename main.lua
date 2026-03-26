@@ -245,13 +245,10 @@ function SlopQuiz:init()
             local isAtEnd, start_page, end_page = isAtChapterEnd()
             if isAtEnd then
                 UIManager:show(ConfirmBox:new{
-                    text = _("End of chapter. Would you like to generate a quiz?"),
+                    text = _("End of chapter. How about a quiz?"),
                     ok_text = _("Quiz Me"),
                     cancel_text = _("Skip"),
                     ok_callback = function()
-                        -- TODO if quiz has already been generated, cache it so it could be reloaded here
-                        -- TODO we might also want an option to regenerate a quiz
-
                         -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
                         local isAtEnd, start_page, end_page, next_chapter_xp = isAtChapterEnd()
                         self.chapter_quiz_plugin:startQuiz(start_page, end_page, next_chapter_xp)
@@ -327,9 +324,27 @@ function SlopQuiz:addToMainMenu(menu_items)
     text = _("SlopQuiz Settings"),
     sorting_hint = "tools",
     sub_item_table = {
+        {
+            text = _("Open quiz for current chapter"),
+            enabled_func = function()
+                return self.ui.doc_settings ~= nil
+            end,
+            callback = function()
+                local not_found_message = _("Could not determine current chapter.")
+                local _, start_page, end_page, next_chapter_xp = self:isAtChapterEnd()
+                if start_page and end_page then
+                    self:startQuiz(start_page, end_page, next_chapter_xp)
+                else
+                    UIManager:show(InfoMessage:new{
+                        text = not_found_message
+                    })
+                end
+            end,
+            separator = true,
+        },
 
         {
-            text = _("Enable for this book"),
+            text = _("Enable quiz prompt for this book"),
             keep_menu_open = true,
             enabled_func = function ()
                 return self.ui.doc_settings ~= nil
@@ -343,7 +358,7 @@ function SlopQuiz:addToMainMenu(menu_items)
             end,
         },
         {
-            text = _("Enable by default for new books"),
+            text = _("Enable quiz prompt by default for new books"),
             keep_menu_open = true,
             checked_func = function()
                 return G_reader_settings:isTrue("slopquiz_enabled_by_default")
