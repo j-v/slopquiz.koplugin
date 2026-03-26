@@ -461,6 +461,36 @@ function SlopQuiz:addToMainMenu(menu_items)
 end
 
 function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
+    local page_to_bookmark
+    if not self.ui.document.info.has_pages then
+        -- EPUB / reflowable
+        if next_chapter_xp then
+            page_to_bookmark = self.ui.document.getPrevVisibleChar and self.ui.document:getPrevVisibleChar(next_chapter_xp) or next_chapter_xp
+        else
+            page_to_bookmark = self.ui.document:getPageXPointer(end_page)
+        end
+    else
+        -- PDF / fixed layout
+        page_to_bookmark = end_page
+    end
+
+    local quiz_viewer_title = _("Chapter quiz")
+    -- Check if a quiz bookmark already exists on this page
+    if self.ui.annotation and self.ui.annotation.annotations then
+        for _, anno in ipairs(self.ui.annotation.annotations) do
+            if anno.page == page_to_bookmark and anno.text and anno.text:find("^SlopQuiz") then
+                if anno.note then
+                    local viewer = QuizViewer:new{
+                        title = quiz_viewer_title,
+                        text = anno.note
+                    }
+                    UIManager:show(viewer)
+                    return
+                end
+            end
+        end
+    end
+
     Trapper:wrap(function()
         -- extract text
         local book_text = ""
@@ -567,24 +597,11 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
         end
 
         local viewer = QuizViewer:new{
-            title = _("Chapter quiz"),
+            title = quiz_viewer_title,
             text = response
         }
         UIManager:show(viewer)
         
-        local page_to_bookmark
-        if not self.ui.document.info.has_pages then
-            -- EPUB / reflowable
-            if next_chapter_xp then
-                page_to_bookmark = self.ui.document.getPrevVisibleChar and self.ui.document:getPrevVisibleChar(next_chapter_xp) or next_chapter_xp
-            else
-                page_to_bookmark = self.ui.document:getPageXPointer(end_page)
-            end
-        else
-            -- PDF / fixed layout
-            page_to_bookmark = end_page
-        end
-
         local chapter = self.ui.toc:getTocTitleByPage(page_to_bookmark)
         if chapter == "" then
             chapter = nil
