@@ -25,7 +25,13 @@ local Screen = Device.screen
 local Size = require("ui/size")
 local Geom = require("ui/geometry")
 local Blitbuffer = require("ffi/blitbuffer")
+local DocSettings = require("docsettings")
 
+
+local CHAPTER_TEXT_VAR = "$CHAPTER_TEXT"
+local AUTHORS_VAR = "$AUTHORS"
+local BOOK_TITLE_VAR ="$BOOK_TITLE"
+local DEFAULT_QUIZ_PROMPT = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR
 
 -- configuration locations
 local PLUGIN_DIR = string.match(debug.getinfo(1).source, "^@(.*/)")
@@ -52,6 +58,7 @@ else
     if success then CONFIG = result
     else logger.warn(result) end
 end
+
 
 local function animateLoadingDots(trap, model, intervalSeconds)
     local dots = ""
@@ -224,6 +231,21 @@ function SlopQuiz:isEnabled()
     self.ui.doc_settings:saveSetting("slopquiz_enabled", defaultSetting)
     return defaultSetting
   end
+end
+
+function SlopQuiz:getDocumentInfo()
+  local document = self.ui.document
+  if document == nil then
+    return { }
+  end
+  local doc_settings = DocSettings:open(document.file)
+  local doc_props = doc_settings:child("doc_props")
+  local title = doc_props:readSetting("title") or document:getProps().title or "Unknown Title"
+  local authors = doc_props:readSetting("authors") or document:getProps().authors or "Unknown Author"
+  return {
+    title = title,
+    authors = authors,
+  }
 end
 
 function SlopQuiz:init()  
@@ -509,7 +531,7 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
 
     Trapper:wrap(function()
         -- extract text
-        local book_text = ""
+        local chapter_text = ""
         if not self.ui.document.info.has_pages then
             -- EPUB / reflowable
             local start_xp = self.ui.document:getPageXPointer(start_page)
@@ -527,7 +549,7 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
             end
             
             if start_xp and end_xp then
-                book_text = self.ui.document:getTextFromXPointers(start_xp, end_xp) or ""
+                chapter_text = self.ui.document:getTextFromXPointers(start_xp, end_xp) or ""
             end
         else
             -- PDF / fixed layout
@@ -548,7 +570,7 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
                     end
                     page_text = table.concat(texts, " ")
                 end
-                book_text = book_text .. "\n" .. page_text
+                chapter_text = chapter_text .. "\n" .. page_text
             end
         end
 
@@ -591,9 +613,15 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
             return
         end
 
-        -- TODO customizable prompt in settings
-        -- TODO option to add book name and author in prompt?
-        local prompt = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. book_text
+        local docInfo = self:getDocumentInfo()
+        local base_prompt = DEFAULT_QUIZ_PROMPT
+        local prompt = base_prompt:gsub(
+            BOOK_TITLE_VAR, docInfo.title
+        ):gsub(
+            AUTHORS_VAR, docInfo.authors
+        ):gsub(
+            CHAPTER_TEXT_VAR, chapter_text
+        )     
 
         local trap = InfoMessage:new{
             text = _("Generating Quiz...") .. "\n" .. _("Model: ") .. model,
