@@ -2,6 +2,8 @@
 
 Want to improve your reading comprehension? Why not try using AI slop? SlopQuiz is a KOReader plugin that shows you LLM-generated powered quizzes at the end of each chapter using any OpenAI-compatible LLM API.
 
+![slopquiz-demo-2](https://github.com/user-attachments/assets/5304988e-1ceb-4603-8dbb-3b865a47e744)
+
 ## How it works
 
 When you reach the last page of a chapter and turn the page, SlopQuiz intercepts the page turn and offers you a quiz. It extracts the chapter text, sends it to your configured LLM provider with a customizable prompt, and displays the generated quiz in a scrollable viewer. The quiz is saved as a bookmark annotation at the end of the chapter so it can be retrieved instantly on subsequent visits without another API call. You can edit to add your answers, or re-generate the quiz at any time from the viewer.
