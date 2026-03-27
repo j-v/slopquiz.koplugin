@@ -12,6 +12,7 @@ When you reach the last page of a chapter and turn the page, SlopQuiz intercepts
 
 ## Installation
 
+1. Download the [latest release](https://github.com/j-v/slopquiz.koplugin/releases) and unzip it
 1. Copy the `slopquiz.koplugin` folder into KOReader's `plugins/` directory.
 2. Restart KOReader. The plugin will appear under **Tools → SlopQuiz** in the reader menu.
 
