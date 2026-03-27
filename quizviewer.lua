@@ -2,6 +2,7 @@ local BD = require("ui/bidi")
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonTable = require("ui/widget/buttontable")
 local CenterContainer = require("ui/widget/container/centercontainer")
+local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
 local Geom = require("ui/geometry")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -85,6 +86,7 @@ local QuizViewer = InputContainer:extend{
     item = nil,
     ui = nil,
     index = nil,
+    regenerate_callback = nil,
 }
 
 function QuizViewer:init()
@@ -218,6 +220,13 @@ function QuizViewer:init()
             end,
         },
         {
+            text = _("Regenerate"),
+            enabled = function() return self.regenerate_callback ~= nil end,
+            callback = function()
+                self:onRegenerate()
+            end,
+        },
+        {
             text = _("Close"),
             callback = function()
                 self:onClose()
@@ -330,6 +339,19 @@ function QuizViewer:onClose()
         self.close_callback()
     end
     return true
+end
+
+function QuizViewer:onRegenerate()
+    UIManager:show(ConfirmBox:new{
+        text = _("Regenerate the quiz for this chapter? The existing quiz will be replaced."),
+        ok_text = _("Regenerate"),
+        ok_callback = function()
+            UIManager:close(self)
+            if self.regenerate_callback then
+                self.regenerate_callback()
+            end
+        end,
+    })
 end
 
 function QuizViewer:onEdit()

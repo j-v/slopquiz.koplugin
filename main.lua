@@ -14,6 +14,7 @@ local DocSettings = require("docsettings")
 local QuizPrompts = require("quizprompts")
 local ProviderSelectionDialog = require("providerselectiondialog")
 local PromptSelectionDialog = require("promptselectiondialog")
+local Dispatcher = require("dispatcher")
 
 -- configuration locations
 local PLUGIN_DIR = string.match(debug.getinfo(1).source, "^@(.*/)")
@@ -77,34 +78,6 @@ local SlopQuiz = WidgetContainer:extend {
   is_doc_only = false,
 }
 
-function SlopQuiz:isEnabled()
-  if self.ui.doc_settings == nil then return false end
-
-  local bookSetting = self.ui.doc_settings:readSetting("slopquiz_enabled")
-  if bookSetting ~= nil then
-    return bookSetting
-  else 
-    local defaultSetting = G_reader_settings:isTrue("slopquiz_enabled_by_default")
-    self.ui.doc_settings:saveSetting("slopquiz_enabled", defaultSetting)
-    return defaultSetting
-  end
-end
-
-function SlopQuiz:getDocumentInfo()
-  local document = self.ui.document
-  if document == nil then
-    return { }
-  end
-  local doc_settings = DocSettings:open(document.file)
-  local doc_props = doc_settings:child("doc_props")
-  local title = doc_props:readSetting("title") or document:getProps().title or "Unknown Title"
-  local authors = doc_props:readSetting("authors") or document:getProps().authors or "Unknown Author"
-  return {
-    title = title,
-    authors = authors,
-  }
-end
-
 function SlopQuiz:init()  
   local function isAtChapterEnd()
     return SlopQuiz.isAtChapterEnd(self)
@@ -156,6 +129,56 @@ function SlopQuiz:init()
   ReaderRolling.chapter_quiz_plugin = self
 
   self.ui.menu:registerToMainMenu(self)
+  self:onDispatcherRegisterActions()
+end
+
+function SlopQuiz:onDispatcherRegisterActions()
+  Dispatcher:registerAction("slopquiz_open_chapter_quiz", {
+    category = "none",
+    event = "SlopQuizOpenChapterQuiz",
+    title = _("SlopQuiz: Open chapter quiz"),
+    general = true,
+  })
+end
+
+function SlopQuiz:onSlopQuizOpenChapterQuiz()
+  local not_found_message = _("Could not determine current chapter.")
+  local _, start_page, end_page, next_chapter_xp = self:isAtChapterEnd()
+  if start_page and end_page then
+    self:startQuiz(start_page, end_page, next_chapter_xp)
+  else
+    UIManager:show(InfoMessage:new{
+      text = not_found_message
+    })
+  end
+end
+
+function SlopQuiz:isEnabled()
+  if self.ui.doc_settings == nil then return false end
+
+  local bookSetting = self.ui.doc_settings:readSetting("slopquiz_enabled")
+  if bookSetting ~= nil then
+    return bookSetting
+  else 
+    local defaultSetting = G_reader_settings:isTrue("slopquiz_enabled_by_default")
+    self.ui.doc_settings:saveSetting("slopquiz_enabled", defaultSetting)
+    return defaultSetting
+  end
+end
+
+function SlopQuiz:getDocumentInfo()
+  local document = self.ui.document
+  if document == nil then
+    return { }
+  end
+  local doc_settings = DocSettings:open(document.file)
+  local doc_props = doc_settings:child("doc_props")
+  local title = doc_props:readSetting("title") or document:getProps().title or "Unknown Title"
+  local authors = doc_props:readSetting("authors") or document:getProps().authors or "Unknown Author"
+  return {
+    title = title,
+    authors = authors,
+  }
 end
 
 function SlopQuiz:isAtChapterEnd()
@@ -196,11 +219,8 @@ function SlopQuiz:isAtChapterEnd()
 end
 
 function SlopQuiz:addToMainMenu(menu_items)
-  -- TODO allow use of config file for settings? (like assistant.koplugin)
-  -- TODO option to inherit settings from assistant.koplugin?
-
   menu_items.slop_quiz = {
-    text = _("SlopQuiz Settings"),
+    text = _("SlopQuiz"),
     sorting_hint = "tools",
     sub_item_table = {
         {
@@ -209,15 +229,7 @@ function SlopQuiz:addToMainMenu(menu_items)
                 return self.ui.doc_settings ~= nil
             end,
             callback = function()
-                local not_found_message = _("Could not determine current chapter.")
-                local _, start_page, end_page, next_chapter_xp = self:isAtChapterEnd()
-                if start_page and end_page then
-                    self:startQuiz(start_page, end_page, next_chapter_xp)
-                else
-                    UIManager:show(InfoMessage:new{
-                        text = not_found_message
-                    })
-                end
+                self:onSlopQuizOpenChapterQuiz()
             end,
             separator = true,
         },
@@ -388,6 +400,10 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
                         text = anno.note,
                         index = i,
                         ui = self.ui,
+                        regenerate_callback = function()
+                            self.ui.bookmark:removeItemByIndex(i)
+                            self:startQuiz(start_page, end_page, next_chapter_xp)
+                        end,
                     }
                     UIManager:show(viewer)
                     return
@@ -548,6 +564,10 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
             text = response,
             index = index,
             ui = self.ui,
+            regenerate_callback = function()
+                self.ui.bookmark:removeItemByIndex(index)
+                self:startQuiz(start_page, end_page, next_chapter_xp)
+            end,
         }
         UIManager:show(viewer)
     end)
