@@ -1,4 +1,3 @@
-local Dispatcher = require("dispatcher") -- luacheck:ignore
 local InfoMessage = require("ui/widget/infomessage")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
@@ -10,51 +9,11 @@ local ReaderRolling = require("apps/reader/modules/readerrolling")
 local InputDialog = require("ui/widget/inputdialog")
 local LLMHandler = require("llm_handler")
 local Trapper = require("ui/trapper")
-local RadioButtonTable = require("ui/widget/radiobuttontable")
-local ButtonTable = require("ui/widget/buttontable")
-local TitleBar = require("ui/widget/titlebar")
-local FrameContainer = require("ui/widget/container/framecontainer")
 local Event = require("ui/event")
-local MovableContainer = require("ui/widget/container/movablecontainer")
-local CenterContainer = require("ui/widget/container/centercontainer")
-local VerticalGroup = require("ui/widget/verticalgroup")
-local VerticalSpan = require("ui/widget/verticalspan")
-local FocusManager = require("ui/widget/focusmanager")
-local Device = require("device")
-local Screen = Device.screen
-local Size = require("ui/size")
-local Geom = require("ui/geometry")
-local Blitbuffer = require("ffi/blitbuffer")
 local DocSettings = require("docsettings")
-
-
-local CHAPTER_TEXT_VAR = "$CHAPTER_TEXT"
-local AUTHORS_VAR = "$AUTHORS"
-local BOOK_TITLE_VAR ="$BOOK_TITLE"
-local DEFAULT_QUIZ_PROMPT = "You are an assistant that generates a reading comprehension quiz based on book chapters. Read the text and generate 3 thought-provoking questions about the events, character motivations, themes, and details in the chapter. Format the output clearly. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR
-
-local BUILTIN_PROMPTS = {
-    {
-        id = "_default",
-        name = _("Default (comprehension quiz)"),
-        prompt = DEFAULT_QUIZ_PROMPT,
-    },
-    {
-        id = "_multipleChoice",
-        name = _("Multiple choice quiz"),
-        prompt = "You are a testing the reader of the book \"" .. BOOK_TITLE_VAR .. "\" by " .. AUTHORS_VAR .. "\" on comprehension of the current chapter. Provide a multiple choice test of 3 to 10 questions based on the content. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR,
-    },
-    {
-        id = "_vocabulary",
-        name = _("Vocabulary & language focus"),
-        prompt = "You are a vocabulary tutor. From the following chapter of \"" .. BOOK_TITLE_VAR .. "\" by " .. AUTHORS_VAR .. ", identify 5 notable words or phrases. For each, give a short example sentence showing its use in context and prompt the reader to provide a definition. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR,
-    },
-    {
-        id = "_themes",
-        name = _("Themes & critical analysis"),
-        prompt = "You are a literary critic. Analyse the following chapter from \"" .. BOOK_TITLE_VAR .. "\" by " .. AUTHORS_VAR .. ". Identify 2-3 key themes or motifs at work in this chapter, explain how they are developed, and pose one discussion question inviting the reader's interpretation. Here is the chapter text:\n\n" .. CHAPTER_TEXT_VAR,
-    },
-}
+local QuizPrompts = require("quizprompts")
+local ProviderSelectionDialog = require("providerselectiondialog")
+local PromptSelectionDialog = require("promptselectiondialog")
 
 -- configuration locations
 local PLUGIN_DIR = string.match(debug.getinfo(1).source, "^@(.*/)")
@@ -76,6 +35,7 @@ end
 local ok, err = testConfigFile(CONFIG_FILE_PATH)
 if not ok then 
     CONFIG_LOAD_ERROR = err 
+    logger.warn('Error loading SlopQuiz config file: ', CONFIG_LOAD_ERROR)
 else
     local success, result = pcall(function() return dofile(CONFIG_FILE_PATH) end)
     if success then CONFIG = result
@@ -111,233 +71,6 @@ local function animateLoadingDots(trap, model, intervalSeconds)
         end
     end
 end
-
-
-local ProviderSelectionDialog = FocusManager:extend{
-    width = nil,
-    providers = nil,
-}
-
--- PromptSelectionDialog -------------------------------------------------------
-local PromptSelectionDialog = FocusManager:extend{
-    width = nil,
-    user_prompts = nil, -- from config.lua
-}
-
-function PromptSelectionDialog:init()
-    self.width = self.width or math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.8)
-    local title_bar = TitleBar:new{
-        width = self.width,
-        with_bottom_line = true,
-        title = _("Select Quiz Prompt"),
-        show_parent = self,
-        info_text = _("Add custom prompts via user_prompts in config.lua"),
-    }
-
-    local current_prompt_id = G_reader_settings:readSetting("slopquiz_prompt_id") or "_default"
-    local radio_buttons = {}
-
-    -- built-in prompts
-    for _, p in ipairs(BUILTIN_PROMPTS) do
-        table.insert(radio_buttons, {{
-            text = p.name,
-            checked = current_prompt_id == p.id,
-            provider = { id = p.id },
-        }})
-    end
-
-    -- user-defined prompts from config.lua
-    if self.user_prompts then
-        for i, up in ipairs(self.user_prompts) do
-            if type(up.name) == "string" and type(up.prompt) == "string" then
-                local uid = "_user_" .. i
-                table.insert(radio_buttons, {{
-                    text = up.name,
-                    checked = current_prompt_id == uid,
-                    provider = { id = uid },
-                }})
-            end
-        end
-    end
-
-    self.radio_table = RadioButtonTable:new{
-        radio_buttons = radio_buttons,
-        width = self.width - 2 * Size.padding.large,
-        parent = self,
-    }
-
-    self.button_table = ButtonTable:new{
-        width = self.width - 2 * Size.padding.default,
-        buttons = {{
-            {
-                text = _("Cancel"),
-                callback = function() UIManager:close(self) end,
-            },
-            {
-                text = _("Select"),
-                callback = function()
-                    local pid = self.radio_table.checked_button.provider.id
-                    G_reader_settings:saveSetting("slopquiz_prompt_id", pid)
-                    UIManager:close(self)
-                end,
-            },
-        }},
-        show_parent = self,
-    }
-
-    self.dialog_frame = FrameContainer:new{
-        radius = Size.radius.window,
-        bordersize = Size.border.window,
-        background = Blitbuffer.COLOR_WHITE,
-        VerticalGroup:new{
-            align = "center",
-            title_bar,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            self.radio_table,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            self.button_table,
-        }
-    }
-
-    self.movable = MovableContainer:new{ self.dialog_frame }
-    self[1] = CenterContainer:new{
-        dimen = Geom:new{ w = Screen:getWidth(), h = Screen:getHeight() },
-        self.movable,
-    }
-end
-
-function PromptSelectionDialog:onShow()
-    UIManager:setDirty(self, function()
-        return "ui", self.dialog_frame.dimen
-    end)
-end
-
-function PromptSelectionDialog:onCloseWidget()
-    UIManager:setDirty(nil, function()
-        return "ui", self.movable.dimen
-    end)
-end
--- end PromptSelectionDialog ---------------------------------------------------
-
-function ProviderSelectionDialog:init()
-    self.width = self.width or math.floor(math.min(Screen:getWidth(), Screen:getHeight()) * 0.8)
-    local title_bar = TitleBar:new{
-        width = self.width,
-        with_bottom_line = true,
-        title = _("Select Provider"),
-        show_parent = self,
-        info_text = _("Add addtional providers to config.lua to select them here")
-    }
-
-    local current_provider = G_reader_settings:readSetting("slopquiz_provider");
-    local radio_buttons = {}
-    table.insert(radio_buttons, {
-        {
-            text = _("Default - configure in menu"),
-            checked = current_provider == nil or current_provider == "_default",
-            provider = "_default",
-        }
-    })
-    local invalid_provider_found = false
-    if self.providers ~= nil then
-        for i = 1, #self.providers do
-            -- validate provider config
-            local provider_is_valid = true
-            if self.providers[i].name == nil or self.providers[i].name == "" then
-                provider_is_valid = false
-            end
-            if self.providers[i].model == nil or self.providers[i].model == "" then
-                provider_is_valid = false
-            end
-            if self.providers[i].api_key == nil then
-                provider_is_valid = false
-            end 
-
-            if provider_is_valid then
-                table.insert(radio_buttons, {
-                    {
-                        text = self.providers[i].name,
-                        checked = current_provider == self.providers[i].name,
-                        provider = self.providers[i],
-                    }
-                })
-            else
-                invalid_provider_found = true
-            end
-        end
-        if invalid_provider_found then 
-            UIManager:show(InfoMessage:new{
-                text = _("Invalid provider found in config.lua. Ensure name, model, and api_key are provided for each provider")
-            })
-        end
-    end
-
-    self.radio_table = RadioButtonTable:new{
-        radio_buttons = radio_buttons,
-        width = self.width - 2 * Size.padding.large,
-        parent = self,
-    }
-
-    self.button_table = ButtonTable:new{
-        width = self.width - 2 * Size.padding.default,
-        buttons = {
-            {
-                {
-                    text = _("Cancel"),
-                    callback = function()
-                        UIManager:close(self)
-                    end,
-                },
-                {
-                    text = _("Select"),
-                    callback = function()
-                        G_reader_settings:saveSetting("slopquiz_provider", self.radio_table.checked_button.provider.name)
-                        UIManager:close(self)
-                    end,
-                }
-            }
-        },
-        show_parent = self,
-    }
-
-    self.dialog_frame = FrameContainer:new{
-        radius = Size.radius.window,
-        bordersize = Size.border.window,
-        background = Blitbuffer.COLOR_WHITE,
-        VerticalGroup:new{
-            align = "center",
-            title_bar,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            self.radio_table,
-            VerticalSpan:new{ width = Size.span.vertical_large },
-            self.button_table,
-        }
-    }
-
-    self.movable = MovableContainer:new{
-        self.dialog_frame,
-    }
-    self[1] = CenterContainer:new{
-        dimen = Geom:new{
-            w = Screen:getWidth(),
-            h = Screen:getHeight(),
-        },
-        self.movable,
-    }
-end
-
-function ProviderSelectionDialog:onShow()
-    UIManager:setDirty(self, function()
-        return "ui", self.dialog_frame.dimen
-    end)
-end
-
-function ProviderSelectionDialog:onCloseWidget()
-    UIManager:setDirty(nil, function()
-        return "ui", self.movable.dimen
-    end)
-end
-
 
 local SlopQuiz = WidgetContainer:extend {
   name = "slopquiz",
@@ -751,9 +484,9 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
 
         -- Resolve selected prompt template
         local prompt_id = G_reader_settings:readSetting("slopquiz_prompt_id") or "_default"
-        local base_prompt = DEFAULT_QUIZ_PROMPT
+        local base_prompt = QuizPrompts.DEFAULT_QUIZ_PROMPT
         -- check built-in prompts
-        for _, p in ipairs(BUILTIN_PROMPTS) do
+        for _, p in ipairs(QuizPrompts.BUILTIN_PROMPTS) do
             if p.id == prompt_id then
                 base_prompt = p.prompt
                 break
@@ -771,11 +504,11 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
         end
 
         local prompt = base_prompt:gsub(
-            BOOK_TITLE_VAR, docInfo.title
+            QuizPrompts.BOOK_TITLE_VAR, docInfo.title
         ):gsub(
-            AUTHORS_VAR, docInfo.authors
+            QuizPrompts.AUTHORS_VAR, docInfo.authors
         ):gsub(
-            CHAPTER_TEXT_VAR, chapter_text
+            QuizPrompts.CHAPTER_TEXT_VAR, chapter_text
         )
 
         local trap = InfoMessage:new{
