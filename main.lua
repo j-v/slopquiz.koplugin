@@ -94,18 +94,16 @@ function SlopQuiz:init()
 ---@diagnostic disable-next-line: duplicate-set-field
     function ReaderRolling:onGotoViewRel(diff, no_page_turn)
         if isEnabled() and diff == 1 then
-            local isAtEnd, start_page, end_page = isAtChapterEnd()
-            if isAtEnd then
+            local isAtEnd, start_page, end_page, next_chapter_xpointer = isAtChapterEnd()
+            if isAtEnd and end_page > start_page then
                 UIManager:show(ConfirmBox:new{
                     text = _("End of chapter. How about a quiz?"),
                     ok_text = _("Quiz Me"),
                     cancel_text = _("Skip"),
                     ok_callback = function()
-                        -- Proceed to next page first? Or stay on the same page. Let's just generate quiz.
-                        local isAtEnd, start_page, end_page, next_chapter_xp = isAtChapterEnd()
-                        self.chapter_quiz_plugin:startQuiz(start_page, end_page, next_chapter_xp)
+                        self.chapter_quiz_plugin:startQuiz(start_page, end_page, next_chapter_xpointer)
                         
-                        -- Also optionally go to next page
+                        -- Go to next page
                         ReaderRolling.__chapter_quiz_orig_onGotoViewRel(
                             self, diff, no_page_turn
                         )
