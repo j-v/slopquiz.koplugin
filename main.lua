@@ -15,6 +15,7 @@ local QuizPrompts = require("quizprompts")
 local ProviderSelectionDialog = require("providerselectiondialog")
 local PromptSelectionDialog = require("promptselectiondialog")
 local Dispatcher = require("dispatcher")
+local NetworkMgr = require("ui/network/manager")
 
 -- configuration locations
 local PLUGIN_DIR = string.match(debug.getinfo(1).source, "^@(.*/)")
@@ -525,49 +526,51 @@ function SlopQuiz:startQuiz(start_page, end_page, next_chapter_xp)
             QuizPrompts.CHAPTER_TEXT_VAR, chapter_text
         )
 
-        local trap = InfoMessage:new{
-            text = _("Generating Quiz...") .. "\n" .. _("Model: ") .. model,
-        }
-        UIManager:show(trap)
+        NetworkMgr:runWhenConnected(function()
+            local trap = InfoMessage:new{
+                text = _("Generating Quiz...") .. "\n" .. _("Model: ") .. model,
+            }
+            UIManager:show(trap)
 
-        local stopAnimation = animateLoadingDots(trap, model, 0.5)
+            local stopAnimation = animateLoadingDots(trap, model, 0.5)
 
-        local response, err = LLMHandler.query(api_key, model, base_url, prompt, trap)
+            local response, err = LLMHandler.query(api_key, model, base_url, prompt, trap)
 
-        stopAnimation()
-        UIManager:close(trap)
+            stopAnimation()
+            UIManager:close(trap)
 
-        if err then
-            UIManager:show(InfoMessage:new{ text = "Failed to generate quiz: " .. tostring(err) })
-            return
-        end
+            if err then
+                UIManager:show(InfoMessage:new{ text = "Failed to generate quiz: " .. tostring(err) })
+                return
+            end
 
-        
-        local chapter = self.ui.toc:getTocTitleByPage(page_to_bookmark)
-        if chapter == "" then
-            chapter = nil
-        end
-        local text = chapter and 'SlopQuiz: ' .. chapter or 'SlopQuiz'
-        local item = {
-            page = page_to_bookmark,
-            text = text,
-            chapter = chapter,
-            note = response,
-        }
-        local index = self.ui.annotation:addItem(item)
-        self.ui:handleEvent(Event:new("AnnotationsModified", { item, index_modified = index }))
+            
+            local chapter = self.ui.toc:getTocTitleByPage(page_to_bookmark)
+            if chapter == "" then
+                chapter = nil
+            end
+            local text = chapter and 'SlopQuiz: ' .. chapter or 'SlopQuiz'
+            local item = {
+                page = page_to_bookmark,
+                text = text,
+                chapter = chapter,
+                note = response,
+            }
+            local index = self.ui.annotation:addItem(item)
+            self.ui:handleEvent(Event:new("AnnotationsModified", { item, index_modified = index }))
 
-        local viewer = QuizViewer:new{
-            title = quiz_viewer_title,
-            text = response,
-            index = index,
-            ui = self.ui,
-            regenerate_callback = function()
-                self.ui.bookmark:removeItemByIndex(index)
-                self:startQuiz(start_page, end_page, next_chapter_xp)
-            end,
-        }
-        UIManager:show(viewer)
+            local viewer = QuizViewer:new{
+                title = quiz_viewer_title,
+                text = response,
+                index = index,
+                ui = self.ui,
+                regenerate_callback = function()
+                    self.ui.bookmark:removeItemByIndex(index)
+                    self:startQuiz(start_page, end_page, next_chapter_xp)
+                end,
+            }
+            UIManager:show(viewer)
+        end)
     end)
 end
 
